@@ -317,6 +317,116 @@ static int self_test(void)
     return 1;
 }
 
+
+/* Stage 3: Non-recursive IDA* with 4-bit nibble-packed PDBs (Zero div/mod) */
+static uint16_t s3_perm_move[3][PERMUTATIONS];
+static uint16_t s3_ori_move[3][ORIENTATIONS];
+static uint8_t s3_perm_pdb_packed[PERMUTATIONS / 2];
+static uint8_t s3_ori_pdb_packed[(ORIENTATIONS + 1) / 2];
+static int s3_ready = 0;
+
+static inline uint8_t s3_get_perm_pdb(uint16_t p) {
+    return (uint8_t)((s3_perm_pdb_packed[p >> 1] >> ((p & 1U) << 2)) & 0x0FU);
+}
+
+static inline uint8_t s3_get_ori_pdb(uint16_t o) {
+    return (uint8_t)((s3_ori_pdb_packed[o >> 1] >> ((o & 1U) << 2)) & 0x0FU);
+}
+
+static void s3_init_pdb(void) {
+    if (s3_ready) return;
+    state_t state;
+    uint8_t perm_pdb[PERMUTATIONS], ori_pdb[ORIENTATIONS];
+    uint16_t p_q[PERMUTATIONS], o_q[ORIENTATIONS];
+    uint32_t head, tail;
+    for (uint16_t r = 0; r < PERMUTATIONS; ++r) {
+        unrank_state((uint32_t)r * ORIENTATIONS, &state);
+        for (uint8_t f = 0; f < 3; ++f) {
+            state_t next = quarter_turn(state, f);
+            s3_perm_move[f][r] = (uint16_t)(rank_state(&next) / ORIENTATIONS);
+        }
+    }
+    for (uint16_t r = 0; r < ORIENTATIONS; ++r) {
+        unrank_state(r, &state);
+        for (uint8_t f = 0; f < 3; ++f) {
+            state_t next = quarter_turn(state, f);
+            s3_ori_move[f][r] = (uint16_t)(rank_state(&next) % ORIENTATIONS);
+        }
+    }
+    memset(perm_pdb, 0xFF, sizeof(perm_pdb));
+    head = 0; tail = 0; perm_pdb[0] = 0; p_q[tail++] = 0;
+    while (head < tail) {
+        uint16_t u = p_q[head++]; uint8_t d = perm_pdb[u];
+        for (uint8_t f = 0; f < 3; ++f) {
+            uint16_t v = u;
+            for (uint8_t t = 0; t < 3; ++t) {
+                v = s3_perm_move[f][v];
+                if (perm_pdb[v] == 0xFF) { perm_pdb[v] = (uint8_t)(d + 1U); p_q[tail++] = v; }
+            }
+        }
+    }
+    memset(ori_pdb, 0xFF, sizeof(ori_pdb));
+    head = 0; tail = 0; ori_pdb[0] = 0; o_q[tail++] = 0;
+    while (head < tail) {
+        uint16_t u = o_q[head++]; uint8_t d = ori_pdb[u];
+        for (uint8_t f = 0; f < 3; ++f) {
+            uint16_t v = u;
+            for (uint8_t t = 0; t < 3; ++t) {
+                v = s3_ori_move[f][v];
+                if (ori_pdb[v] == 0xFF) { ori_pdb[v] = (uint8_t)(d + 1U); o_q[tail++] = v; }
+            }
+        }
+    }
+    memset(s3_perm_pdb_packed, 0, sizeof(s3_perm_pdb_packed));
+    for (uint16_t i = 0; i < PERMUTATIONS; ++i)
+        s3_perm_pdb_packed[i >> 1] |= (uint8_t)((perm_pdb[i] & 0x0FU) << ((i & 1U) << 2));
+    memset(s3_ori_pdb_packed, 0, sizeof(s3_ori_pdb_packed));
+    for (uint16_t i = 0; i < ORIENTATIONS; ++i)
+        s3_ori_pdb_packed[i >> 1] |= (uint8_t)((ori_pdb[i] & 0x0FU) << ((i & 1U) << 2));
+    s3_ready = 1;
+}
+
+static uint8_t s3_ida_solve(uint16_t start_p, uint16_t start_o, uint8_t *sol_moves) {
+    s3_init_pdb();
+    uint8_t hp = s3_get_perm_pdb(start_p), ho = s3_get_ori_pdb(start_o);
+    uint8_t bound = hp > ho ? hp : ho;
+    if (bound == 0) return 0;
+    uint16_t st_p[12], st_o[12], cur_p[12], cur_o[12];
+    uint8_t st_face[12], st_turn[12], st_last_face[12], chosen_move[12];
+    for (;; ++bound) {
+        int depth = 0;
+        st_p[0] = start_p; st_o[0] = start_o;
+        st_face[0] = 0; st_turn[0] = 0; st_last_face[0] = 3;
+        while (depth >= 0) {
+            uint8_t f = st_face[depth];
+            if (f >= 3) { --depth; continue; }
+            if (f == st_last_face[depth]) { st_face[depth] = (uint8_t)(f + 1U); st_turn[depth] = 0; continue; }
+            uint8_t t = st_turn[depth];
+            uint16_t np, no;
+            if (t == 0) { np = s3_perm_move[f][st_p[depth]]; no = s3_ori_move[f][st_o[depth]]; }
+            else { np = s3_perm_move[f][cur_p[depth]]; no = s3_ori_move[f][cur_o[depth]]; }
+            cur_p[depth] = np; cur_o[depth] = no;
+            chosen_move[depth] = (uint8_t)((f << 1) + f + t);
+            if (t == 2) { st_face[depth] = (uint8_t)(f + 1U); st_turn[depth] = 0; }
+            else { st_turn[depth] = (uint8_t)(t + 1U); }
+            uint8_t next_g = (uint8_t)(depth + 1);
+            if (np == 0 && no == 0) {
+                for (uint8_t i = 0; i < next_g; ++i) sol_moves[i] = chosen_move[i];
+                return next_g;
+            }
+            if (next_g < bound) {
+                uint8_t h1 = s3_get_perm_pdb(np);
+                if (next_g + h1 <= bound) {
+                    uint8_t h2 = s3_get_ori_pdb(no);
+                    if (next_g + h2 <= bound) {
+                        depth = next_g; st_p[depth] = np; st_o[depth] = no;
+                        st_face[depth] = 0; st_turn[depth] = 0; st_last_face[depth] = f;
+                    }
+                }
+            }
+        }
+    }
+}
 int main(int argc, char **argv)
 {
     state_t state;

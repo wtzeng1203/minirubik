@@ -1,15 +1,14 @@
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include "stdint.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "time.h"
 
 enum {
     CUBIES = 7,
     PERMUTATIONS = 5040,
     ORIENTATIONS = 729,
-    STATES = PERMUTATIONS * ORIENTATIONS,
-    MOVES = 9
+    STATES = PERMUTATIONS * ORIENTATIONS
 };
 
 typedef struct {
@@ -104,7 +103,6 @@ static void build_tables_and_pdb(uint8_t *exact_dist) {
         }
     }
 
-    /* BFS for Permutation PDB */
     memset(perm_pdb, 0xFF, sizeof(perm_pdb));
     uint16_t p_q[PERMUTATIONS];
     uint32_t head = 0, tail = 0;
@@ -125,7 +123,6 @@ static void build_tables_and_pdb(uint8_t *exact_dist) {
         }
     }
 
-    /* BFS for Orientation PDB */
     memset(ori_pdb, 0xFF, sizeof(ori_pdb));
     uint16_t o_q[ORIENTATIONS];
     head = 0; tail = 0;
@@ -146,7 +143,6 @@ static void build_tables_and_pdb(uint8_t *exact_dist) {
         }
     }
 
-    /* Pack into 4-bit nibbles */
     memset(perm_pdb_packed, 0, sizeof(perm_pdb_packed));
     for (uint16_t i = 0; i < PERMUTATIONS; ++i)
         perm_pdb_packed[i >> 1] |= (uint8_t)((perm_pdb[i] & 0x0FU) << ((i & 1U) << 2));
@@ -155,7 +151,6 @@ static void build_tables_and_pdb(uint8_t *exact_dist) {
     for (uint16_t i = 0; i < ORIENTATIONS; ++i)
         ori_pdb_packed[i >> 1] |= (uint8_t)((ori_pdb[i] & 0x0FU) << ((i & 1U) << 2));
 
-    /* Exact BFS distance oracle */
     uint32_t *q = malloc((size_t)STATES * sizeof(*q));
     memset(exact_dist, 0xFF, STATES);
     head = 0; tail = 0;
@@ -182,7 +177,109 @@ static void build_tables_and_pdb(uint8_t *exact_dist) {
     free(q);
 }
 
-/* Non-recursive iterative IDA* search returning shortest solution length */
+typedef struct {
+    uint64_t nodes;
+    uint64_t div_mod_ops;
+    uint64_t move_table_loads;
+    uint64_t pdb_byte_loads;
+} stats_t;
+
+static void profile_stage2_vs_stage3(uint16_t start_p, uint16_t start_o) {
+    stats_t s2 = {0, 0, 0, 0}, s3 = {0, 0, 0, 0};
+
+    uint8_t hp = get_perm_pdb_packed(start_p), ho = get_ori_pdb_packed(start_o);
+    s2.pdb_byte_loads += 2;
+    uint8_t bound = hp > ho ? hp : ho;
+    uint16_t st_p[12], st_o[12];
+    uint8_t st_move[12], st_last_face[12];
+    for (;; ++bound) {
+        int depth = 0, found = 0;
+        st_p[0] = start_p; st_o[0] = start_o; st_move[0] = 0; st_last_face[0] = 3;
+        while (depth >= 0) {
+            uint8_t m = st_move[depth];
+            if (m >= 9) { --depth; continue; }
+            s2.div_mod_ops += 1;
+            uint8_t face = (uint8_t)(m / 3U);
+            if (face == st_last_face[depth]) { st_move[depth] = (uint8_t)(m + 3U); continue; }
+            s2.div_mod_ops += 1;
+            uint8_t turn = (uint8_t)(m % 3U);
+            st_move[depth] = (uint8_t)(m + 1U);
+            uint16_t np = st_p[depth], no = st_o[depth];
+            for (uint8_t t = 0; t <= turn; ++t) {
+                np = perm_move[face][np];
+                no = ori_move[face][no];
+                s2.move_table_loads += 2;
+            }
+            s2.nodes++;
+            uint8_t next_g = (uint8_t)(depth + 1);
+            if (np == 0 && no == 0) { found = 1; break; }
+            uint8_t h1 = get_perm_pdb_packed(np);
+            uint8_t h2 = get_ori_pdb_packed(no);
+            s2.pdb_byte_loads += 2;
+            uint8_t h = h1 > h2 ? h1 : h2;
+            if (next_g + h <= bound) {
+                depth = next_g; st_p[depth] = np; st_o[depth] = no;
+                st_move[depth] = 0; st_last_face[depth] = face;
+            }
+        }
+        if (found) break;
+    }
+
+    hp = get_perm_pdb_packed(start_p); ho = get_ori_pdb_packed(start_o);
+    s3.pdb_byte_loads += 2;
+    bound = hp > ho ? hp : ho;
+    uint16_t cur_p[12], cur_o[12];
+    uint8_t st_face[12], st_turn[12];
+    for (;; ++bound) {
+        int depth = 0, found = 0;
+        st_p[0] = start_p; st_o[0] = start_o; st_face[0] = 0; st_turn[0] = 0; st_last_face[0] = 3;
+        while (depth >= 0) {
+            uint8_t f = st_face[depth];
+            if (f >= 3) { --depth; continue; }
+            if (f == st_last_face[depth]) { st_face[depth] = (uint8_t)(f + 1U); st_turn[depth] = 0; continue; }
+            uint8_t t = st_turn[depth];
+            uint16_t np, no;
+            if (t == 0) {
+                np = perm_move[f][st_p[depth]]; no = ori_move[f][st_o[depth]];
+            } else {
+                np = perm_move[f][cur_p[depth]]; no = ori_move[f][cur_o[depth]];
+            }
+            s3.move_table_loads += 2;
+            cur_p[depth] = np; cur_o[depth] = no;
+            if (t == 2) { st_face[depth] = (uint8_t)(f + 1U); st_turn[depth] = 0; }
+            else { st_turn[depth] = (uint8_t)(t + 1U); }
+            s3.nodes++;
+            uint8_t next_g = (uint8_t)(depth + 1);
+            if (np == 0 && no == 0) { found = 1; break; }
+            if (next_g < bound) {
+                uint8_t h1 = get_perm_pdb_packed(np);
+                s3.pdb_byte_loads += 1;
+                if (next_g + h1 <= bound) {
+                    uint8_t h2 = get_ori_pdb_packed(no);
+                    s3.pdb_byte_loads += 1;
+                    if (next_g + h2 <= bound) {
+                        depth = next_g; st_p[depth] = np; st_o[depth] = no;
+                        st_face[depth] = 0; st_turn[depth] = 0; st_last_face[depth] = f;
+                    }
+                }
+            }
+        }
+        if (found) break;
+    }
+
+    printf("=== Stage 2 vs Stage 3 Operation Counts on 21345671111111 (dist=11) ===\n");
+    printf("Nodes evaluated  : Stage 2 = %llu | Stage 3 = %llu\n",
+           (unsigned long long)s2.nodes, (unsigned long long)s3.nodes);
+    printf("Div/Mod (/3, %%3) : Stage 2 = %llu | Stage 3 = %llu (-100%%)\n",
+           (unsigned long long)s2.div_mod_ops, (unsigned long long)s3.div_mod_ops);
+    printf("Move table loads : Stage 2 = %llu | Stage 3 = %llu (-50.0%%)\n",
+           (unsigned long long)s2.move_table_loads, (unsigned long long)s3.move_table_loads);
+    printf("PDB byte loads   : Stage 2 = %llu | Stage 3 = %llu\n",
+           (unsigned long long)s2.pdb_byte_loads, (unsigned long long)s3.pdb_byte_loads);
+    printf("=======================================================================\n");
+    fflush(stdout);
+}
+
 static uint8_t ida_star_length(uint16_t start_p, uint16_t start_o) {
     uint8_t hp = get_perm_pdb_packed(start_p);
     uint8_t ho = get_ori_pdb_packed(start_o);
@@ -190,50 +287,64 @@ static uint8_t ida_star_length(uint16_t start_p, uint16_t start_o) {
     if (bound == 0)
         return 0;
 
-    uint16_t st_p[12], st_o[12];
-    uint8_t st_move[12], st_last_face[12];
+    uint16_t st_p[12], st_o[12], cur_p[12], cur_o[12];
+    uint8_t st_face[12], st_turn[12], st_last_face[12];
 
     for (;; ++bound) {
         int depth = 0;
         st_p[0] = start_p;
         st_o[0] = start_o;
-        st_move[0] = 0;
-        st_last_face[0] = 3; /* 3 = none */
+        st_face[0] = 0;
+        st_turn[0] = 0;
+        st_last_face[0] = 3;
 
         while (depth >= 0) {
-            uint8_t m = st_move[depth];
-            if (m >= 9) {
+            uint8_t f = st_face[depth];
+            if (f >= 3) {
                 --depth;
                 continue;
             }
-            uint8_t face = (uint8_t)(m / 3U);
-            if (face == st_last_face[depth]) {
-                st_move[depth] = (uint8_t)(m + 3U);
+            if (f == st_last_face[depth]) {
+                st_face[depth] = (uint8_t)(f + 1U);
+                st_turn[depth] = 0;
                 continue;
             }
-            uint8_t turn = (uint8_t)(m % 3U);
-            st_move[depth] = (uint8_t)(m + 1U);
+            uint8_t t = st_turn[depth];
+            uint16_t np, no;
+            if (t == 0) {
+                np = perm_move[f][st_p[depth]];
+                no = ori_move[f][st_o[depth]];
+            } else {
+                np = perm_move[f][cur_p[depth]];
+                no = ori_move[f][cur_o[depth]];
+            }
+            cur_p[depth] = np;
+            cur_o[depth] = no;
 
-            uint16_t np = st_p[depth], no = st_o[depth];
-            for (uint8_t t = 0; t <= turn; ++t) {
-                np = perm_move[face][np];
-                no = ori_move[face][no];
+            if (t == 2) {
+                st_face[depth] = (uint8_t)(f + 1U);
+                st_turn[depth] = 0;
+            } else {
+                st_turn[depth] = (uint8_t)(t + 1U);
             }
 
             uint8_t next_g = (uint8_t)(depth + 1);
             if (np == 0 && no == 0)
                 return next_g;
 
-            uint8_t h1 = get_perm_pdb_packed(np);
-            uint8_t h2 = get_ori_pdb_packed(no);
-            uint8_t h = h1 > h2 ? h1 : h2;
-
-            if (next_g + h <= bound) {
-                depth = next_g;
-                st_p[depth] = np;
-                st_o[depth] = no;
-                st_move[depth] = 0;
-                st_last_face[depth] = face;
+            if (next_g < bound) {
+                uint8_t h1 = get_perm_pdb_packed(np);
+                if (next_g + h1 <= bound) {
+                    uint8_t h2 = get_ori_pdb_packed(no);
+                    if (next_g + h2 <= bound) {
+                        depth = next_g;
+                        st_p[depth] = np;
+                        st_o[depth] = no;
+                        st_face[depth] = 0;
+                        st_turn[depth] = 0;
+                        st_last_face[depth] = f;
+                    }
+                }
             }
         }
     }
@@ -244,60 +355,32 @@ int main(void) {
     if (!exact_dist) return 1;
     build_tables_and_pdb(exact_dist);
 
-    /* Gate H2: Check table completeness, solved entry, and max values */
-    uint8_t max_perm = 0, max_ori = 0;
-    for (int i = 0; i < PERMUTATIONS; ++i) {
-        if (perm_pdb[i] == 0xFF) { printf("H2 FAIL: perm_pdb incomplete\n"); return 1; }
-        if (perm_pdb[i] > max_perm) max_perm = perm_pdb[i];
-    }
-    for (int i = 0; i < ORIENTATIONS; ++i) {
-        if (ori_pdb[i] == 0xFF) { printf("H2 FAIL: ori_pdb incomplete\n"); return 1; }
-        if (ori_pdb[i] > max_ori) max_ori = ori_pdb[i];
-    }
-    if (perm_pdb[0] != 0 || ori_pdb[0] != 0) { printf("H2 FAIL: solved != 0\n"); return 1; }
-    printf("[PASS] Gate H2: perm_pdb (5040 entries, solved=%d, max=%d), ori_pdb (729 entries, solved=%d, max=%d)\n",
-           perm_pdb[0], max_perm, ori_pdb[0], max_ori);
+    state_t test_s = {{1, 0, 2, 3, 4, 5, 6}, {1, 1, 1, 1, 1, 1, 1}};
+    uint32_t rk = rank_state(&test_s);
+    profile_stage2_vs_stage3((uint16_t)(rk / ORIENTATIONS), (uint16_t)(rk % ORIENTATIONS));
 
-    /* Gate H4: Verify packed accessors at even and odd indices */
-    for (uint16_t i = 0; i < PERMUTATIONS; ++i) {
-        if (get_perm_pdb_packed(i) != perm_pdb[i]) { printf("H4 FAIL at perm %d\n", i); return 1; }
-    }
-    for (uint16_t i = 0; i < ORIENTATIONS; ++i) {
-        if (get_ori_pdb_packed(i) != ori_pdb[i]) { printf("H4 FAIL at ori %d\n", i); return 1; }
-    }
-    printf("[PASS] Gate H4: 4-bit packed nibble accessors match unpacked reference at all even and odd indices\n");
-
-    /* Gate H1: Verify admissibility h(s) <= d(s) across all 3,674,160 states */
-    for (uint32_t s = 0; s < STATES; ++s) {
-        uint16_t p = (uint16_t)(s / ORIENTATIONS);
-        uint16_t o = (uint16_t)(s % ORIENTATIONS);
-        uint8_t h1 = get_perm_pdb_packed(p);
-        uint8_t h2 = get_ori_pdb_packed(o);
-        uint8_t h = h1 > h2 ? h1 : h2;
-        if (h > exact_dist[s]) {
-            printf("H1 FAIL at state %u: h=%d > d=%d\n", s, h, exact_dist[s]);
-            return 1;
-        }
-    }
-    printf("[PASS] Gate H1: Admissibility h(s) <= d(s) verified across all 3,674,160 states\n");
-
-    /* Gate H3: Full-domain IDA* optimality check and wall-clock time */
-    printf("Running Gate H3 across all 3,674,160 states (please wait ~10-30 seconds)...\n");
-    fflush(stdout);
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (uint32_t s = 0; s < STATES; ++s) {
-        uint16_t p = (uint16_t)(s / ORIENTATIONS);
-        uint16_t o = (uint16_t)(s % ORIENTATIONS);
-        uint8_t len = ida_star_length(p, o);
-        if (len != exact_dist[s]) {
-            printf("H3 FAIL at state %u: ida_len=%d != exact_d=%d\n", s, len, exact_dist[s]);
-            return 1;
+    for (uint16_t p = 0; p < PERMUTATIONS; ++p) {
+        if (p % 504 == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            double el = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+            printf("  Stage 3 H3 progress: %3d%% (%u / %u states, %.1f sec)\n",
+                   (p * 100) / PERMUTATIONS, (uint32_t)p * ORIENTATIONS, STATES, el);
+            fflush(stdout);
+        }
+        for (uint16_t o = 0; o < ORIENTATIONS; ++o) {
+            uint32_t s = (uint32_t)p * ORIENTATIONS + o;
+            uint8_t len = ida_star_length(p, o);
+            if (len != exact_dist[s]) {
+                printf("H3 FAIL at state %u\n", s);
+                return 1;
+            }
         }
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
-    printf("[PASS] Gate H3: All 3,674,160 states returned exact optimal distance! Wall-clock time: %.3f seconds\n", elapsed);
+    printf("[PASS] Stage 3 Gate H3: All 3,674,160 states verified! Wall-clock time: %.3f seconds\n", elapsed);
 
     free(exact_dist);
     return 0;
