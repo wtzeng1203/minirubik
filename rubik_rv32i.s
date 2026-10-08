@@ -1,13 +1,13 @@
 .data
 .align 2
 test1_str: .asciz "12345671111111"
-test2_str: .asciz "41237652313211"
+test2_str: .asciz "27561342131312"
 test3_str: .asciz "21345671111111"
 
 msg_t1:    .asciz "Test 1 (dist 0): "
 msg_t2:    .asciz "Test 2 (dist 3): "
 msg_t3:    .asciz "Test 3 (dist 11): "
-msg_pass:  .asciz "  [PASS T5/T6: Solved state reached, moves <= 11]\n"
+msg_pass:  .asciz "  [PASS T5/T6: Solved state reached, moves == expected]\n"
 msg_fail:  .asciz "  [FAIL verification!]\n"
 msg_nl:    .asciz "\n"
 
@@ -1381,18 +1381,21 @@ main:
     li   a7, 4
     ecall
     la   a0, test1_str
+    li   a1, 0
     jal  ra, solve_and_verify
 
     la   a0, msg_t2
     li   a7, 4
     ecall
     la   a0, test2_str
+    li   a1, 3
     jal  ra, solve_and_verify
 
     la   a0, msg_t3
     li   a7, 4
     ecall
     la   a0, test3_str
+    li   a1, 11
     jal  ra, solve_and_verify
 
     lw   ra, 12(sp)
@@ -1408,13 +1411,13 @@ solve_and_verify:
     sw   s2, 16(sp)
     sw   s3, 12(sp)
 
-    mv   s0, a0
+    mv   s0, a1
     la   t0, cur_state_p
     la   t1, cur_state_o
     li   t2, 0
     li   t3, 7
 parse_loop:
-    add  t4, s0, t2
+    add  t4, a0, t2
     lbu  t5, 0(t4)
     addi t5, t5, -49
     add  t6, t0, t2
@@ -1465,8 +1468,7 @@ replay_done:
     li   a7, 4
     ecall
 
-    li   t0, 11
-    bgt  s3, t0, verify_failed
+    bne  s3, s0, verify_failed
     jal  ra, rank_current_state
     or   t0, a0, a1
     bne  t0, zero, verify_failed
