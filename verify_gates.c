@@ -375,6 +375,43 @@ int main(void) {
     if (!exact_dist) return 1;
     build_tables_and_pdb(exact_dist);
 
+    /* Gate H2: Check table completeness, solved entry, and max values */
+    uint8_t max_perm = 0, max_ori = 0;
+    for (int i = 0; i < PERMUTATIONS; ++i) {
+        if (perm_pdb[i] == 0xFF) { printf("H2 FAIL: perm_pdb incomplete\n"); return 1; }
+        if (perm_pdb[i] > max_perm) max_perm = perm_pdb[i];
+    }
+    for (int i = 0; i < ORIENTATIONS; ++i) {
+        if (ori_pdb[i] == 0xFF) { printf("H2 FAIL: ori_pdb incomplete\n"); return 1; }
+        if (ori_pdb[i] > max_ori) max_ori = ori_pdb[i];
+    }
+    if (perm_pdb[0] != 0 || ori_pdb[0] != 0) { printf("H2 FAIL: solved != 0\n"); return 1; }
+    printf("[PASS] Gate H2: perm_pdb (5040 entries, solved=%d, max=%d), ori_pdb (729 entries, solved=%d, max=%d)\n",
+           perm_pdb[0], max_perm, ori_pdb[0], max_ori);
+
+    /* Gate H4: Verify packed accessors at even and odd indices */
+    for (uint16_t i = 0; i < PERMUTATIONS; ++i) {
+        if (get_perm_pdb_packed(i) != perm_pdb[i]) { printf("H4 FAIL at perm %d\n", i); return 1; }
+    }
+    for (uint16_t i = 0; i < ORIENTATIONS; ++i) {
+        if (get_ori_pdb_packed(i) != ori_pdb[i]) { printf("H4 FAIL at ori %d\n", i); return 1; }
+    }
+    printf("[PASS] Gate H4: 4-bit packed nibble accessors match unpacked reference at all even and odd indices\n");
+
+    /* Gate H1: Verify admissibility h(s) <= d(s) across all 3,674,160 states */
+    for (uint32_t s = 0; s < STATES; ++s) {
+        uint16_t p = (uint16_t)(s / ORIENTATIONS);
+        uint16_t o = (uint16_t)(s % ORIENTATIONS);
+        uint8_t h1 = get_perm_pdb_packed(p);
+        uint8_t h2 = get_ori_pdb_packed(o);
+        uint8_t h = h1 > h2 ? h1 : h2;
+        if (h > exact_dist[s]) {
+            printf("H1 FAIL at state %u: h=%d > d=%d\n", s, h, exact_dist[s]);
+            return 1;
+        }
+    }
+    printf("[PASS] Gate H1: Admissibility h(s) <= d(s) verified across all 3,674,160 states\n");
+
     state_t test_s = {{1, 0, 2, 3, 4, 5, 6}, {1, 1, 1, 1, 1, 1, 1}};
     uint32_t rk = rank_state(&test_s);
     profile_stage2_vs_stage3((uint16_t)(rk / ORIENTATIONS), (uint16_t)(rk % ORIENTATIONS));
