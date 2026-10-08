@@ -1,7 +1,10 @@
 # Build the CLI variant of rubik_rv32i.s: every line from "#if RENDER"
 # through the matching "#endif" becomes an empty line, so the output keeps
 # the source's line numbers and contains no LED_MATRIX reference.
-# Usage: awk -f tools/strip_render.awk rubik_rv32i.s > build/rubik_rv32i_cli.s
+# Usage (rename only on success, so a failed run leaves no CLI file):
+#   mkdir -p build && rm -f build/rubik_rv32i_cli.s &&
+#   awk -f tools/strip_render.awk rubik_rv32i.s > build/rubik_rv32i_cli.s.tmp &&
+#   mv build/rubik_rv32i_cli.s.tmp build/rubik_rv32i_cli.s
 
 function fail(msg) {
     printf "strip_render.awk:%d: %s\n", NR, msg > "/dev/stderr"
