@@ -1,12 +1,15 @@
 .data
 .align 2
+test_count: .word 3
+tests:
+input_str: .asciz "21345671111111"
+    .byte 11
 test1_str: .asciz "12345671111111"
+    .byte 0
 test2_str: .asciz "27561342131312"
-test3_str: .asciz "21345671111111"
+    .byte 3
 
-msg_t1:    .asciz "Test 1 (dist 0): "
-msg_t2:    .asciz "Test 2 (dist 3): "
-msg_t3:    .asciz "Test 3 (dist 11): "
+msg_colon: .asciz ": "
 msg_pass:  .asciz "  [PASS T5/T6: Solved state reached, moves == expected]\n"
 msg_fail:  .asciz "  [FAIL verification!]\n"
 msg_nl:    .asciz "\n"
@@ -1376,28 +1379,24 @@ ori_pdb_packed:
 main:
     addi sp, sp, -16
     sw   ra, 12(sp)
-
-    la   a0, msg_t1
+    la   s0, tests
+    la   t0, test_count
+    lw   s1, 0(t0)
+main_loop:
+    beq  s1, zero, main_done
+    mv   a0, s0
     li   a7, 4
     ecall
-    la   a0, test1_str
-    li   a1, 0
-    jal  ra, solve_and_verify
-
-    la   a0, msg_t2
+    la   a0, msg_colon
     li   a7, 4
     ecall
-    la   a0, test2_str
-    li   a1, 3
+    mv   a0, s0
+    lbu  a1, 15(s0)
     jal  ra, solve_and_verify
-
-    la   a0, msg_t3
-    li   a7, 4
-    ecall
-    la   a0, test3_str
-    li   a1, 11
-    jal  ra, solve_and_verify
-
+    addi s0, s0, 16
+    addi s1, s1, -1
+    j    main_loop
+main_done:
     lw   ra, 12(sp)
     addi sp, sp, 16
     li   a7, 10
