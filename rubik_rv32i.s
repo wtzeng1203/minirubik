@@ -1,5 +1,3 @@
-.equ RENDER, 1
-
 .data
 .align 2
 test1_str: .asciz "12345671111111"
@@ -38,6 +36,7 @@ twist_tab:
     .byte 0, 0, 0, 1, 2, 1, 2, 0
     .byte 0, 0, 0, 0, 0, 0, 0, 0
 
+#if RENDER
 sticker_cubie:
     .byte 6, 3, 7, 0
     .byte 6, 7, 5, 2
@@ -80,6 +79,7 @@ face_xy:
     .byte 18,  7
     .byte 27,  7
     .byte  9, 14
+#endif
 
 .align 2
 cur_state_p:  .word 0, 0
@@ -1426,7 +1426,9 @@ parse_loop:
     addi t2, t2, 1
     blt  t2, t3, parse_loop
 
+#if RENDER
     jal  ra, render_cube
+#endif
     jal  ra, rank_current_state
     mv   s1, a0
     mv   s2, a1
@@ -1451,7 +1453,9 @@ replay_loop:
 
     mv   a0, s2
     jal  ra, apply_move_state
+#if RENDER
     jal  ra, render_cube
+#endif
 
     addi s1, s1, 1
     j    replay_loop
@@ -1835,9 +1839,8 @@ ida_exit:
     addi sp, sp, 48
     ret
 
+#if RENDER
 render_cube:
-    li   t0, RENDER
-    beq  t0, zero, render_done
     la   t0, LED_MATRIX_0_BASE
     li   t1, 0
     li   t6, 24
@@ -1920,3 +1923,4 @@ next_sticker:
 render_done:
 
     ret
+#endif
