@@ -280,7 +280,7 @@ static void profile_stage2_vs_stage3(uint16_t start_p, uint16_t start_o) {
     fflush(stdout);
 }
 
-static uint8_t ida_star_length(uint16_t start_p, uint16_t start_o) {
+static uint8_t ida_star_length(uint16_t start_p, uint16_t start_o, uint64_t *nodes) {
     uint8_t hp = get_perm_pdb_packed(start_p);
     uint8_t ho = get_ori_pdb_packed(start_o);
     uint8_t bound = hp > ho ? hp : ho;
@@ -320,6 +320,7 @@ static uint8_t ida_star_length(uint16_t start_p, uint16_t start_o) {
             }
             cur_p[depth] = np;
             cur_o[depth] = no;
+            ++*nodes;
 
             if (t == 2) {
                 st_face[depth] = (uint8_t)(f + 1U);
@@ -350,6 +351,25 @@ static uint8_t ida_star_length(uint16_t start_p, uint16_t start_o) {
     }
 }
 
+typedef struct {
+    uint32_t rank;
+    uint64_t nodes;
+} worst_t;
+
+static int worst_cmp(const void *a, const void *b) {
+    uint64_t na = ((const worst_t *)a)->nodes, nb = ((const worst_t *)b)->nodes;
+    return na < nb ? 1 : na > nb ? -1 : 0;
+}
+
+static void print_state(uint32_t rank) {
+    state_t state;
+    unrank_state(rank, &state);
+    for (uint8_t i = 0; i < CUBIES; ++i)
+        putchar('1' + state.p[i]);
+    for (uint8_t i = 0; i < CUBIES; ++i)
+        putchar('1' + state.o[i]);
+}
+
 int main(void) {
     uint8_t *exact_dist = malloc(STATES);
     if (!exact_dist) return 1;
@@ -360,6 +380,7 @@ int main(void) {
     profile_stage2_vs_stage3((uint16_t)(rk / ORIENTATIONS), (uint16_t)(rk % ORIENTATIONS));
 
     struct timespec t0, t1;
+    uint64_t h3_nodes = 0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (uint16_t p = 0; p < PERMUTATIONS; ++p) {
         if (p % 504 == 0) {
@@ -371,7 +392,7 @@ int main(void) {
         }
         for (uint16_t o = 0; o < ORIENTATIONS; ++o) {
             uint32_t s = (uint32_t)p * ORIENTATIONS + o;
-            uint8_t len = ida_star_length(p, o);
+            uint8_t len = ida_star_length(p, o, &h3_nodes);
             if (len != exact_dist[s]) {
                 printf("H3 FAIL at state %u\n", s);
                 return 1;
@@ -381,6 +402,47 @@ int main(void) {
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
     printf("[PASS] Stage 3 Gate H3: All 3,674,160 states verified! Wall-clock time: %.3f seconds\n", elapsed);
+    printf("H3 total nodes: %llu (mean %.1f per state)\n",
+           (unsigned long long)h3_nodes, (double)h3_nodes / STATES);
+
+    enum { TOP = 10 };
+    const state_t t6_state = {{1, 0, 2, 3, 4, 5, 6}, {0, 0, 0, 0, 0, 0, 0}};
+    uint32_t t6_rank = rank_state(&t6_state);
+    uint32_t count = 0;
+    for (uint32_t s = 0; s < STATES; ++s)
+        count += exact_dist[s] == 11;
+    worst_t *worst = count ? malloc(count * sizeof(*worst)) : NULL;
+    if (!worst) return 1;
+    uint64_t total = 0;
+    uint32_t n = 0;
+    for (uint32_t s = 0; s < STATES; ++s) {
+        if (exact_dist[s] != 11)
+            continue;
+        uint64_t nodes = 0;
+        if (ida_star_length((uint16_t)(s / ORIENTATIONS), (uint16_t)(s % ORIENTATIONS), &nodes) != 11) {
+            printf("WORST FAIL at state %u\n", s);
+            return 1;
+        }
+        worst[n].rank = s;
+        worst[n].nodes = nodes;
+        total += nodes;
+        ++n;
+    }
+    qsort(worst, count, sizeof(*worst), worst_cmp);
+    printf("=== %u distance-11 states, Stage 3 IDA* nodes: min %llu, median %llu, mean %.1f, max %llu ===\n",
+           count, (unsigned long long)worst[count - 1].nodes, (unsigned long long)worst[count / 2].nodes,
+           (double)total / count, (unsigned long long)worst[0].nodes);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (i >= TOP && worst[i].rank != t6_rank)
+            continue;
+        uint16_t p = (uint16_t)(worst[i].rank / ORIENTATIONS), o = (uint16_t)(worst[i].rank % ORIENTATIONS);
+        uint8_t hp = get_perm_pdb_packed(p), ho = get_ori_pdb_packed(o);
+        printf("  #%-4u ", i + 1);
+        print_state(worst[i].rank);
+        printf("  nodes %llu  h0 %u%s\n", (unsigned long long)worst[i].nodes, (unsigned)(hp > ho ? hp : ho),
+               worst[i].rank == t6_rank ? "  (T6 test state)" : "");
+    }
+    free(worst);
 
     free(exact_dist);
     return 0;
