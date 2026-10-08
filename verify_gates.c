@@ -86,7 +86,7 @@ static void unrank_state(uint32_t rank, state_t *state) {
     state->o[6] = (uint8_t)((3U - sum % 3U) % 3U);
 }
 
-static void build_tables_and_pdb(uint8_t *exact_dist) {
+static void build_tables_and_pdb(void) {
     state_t state;
     for (uint16_t r = 0; r < PERMUTATIONS; ++r) {
         unrank_state((uint32_t)r * ORIENTATIONS, &state);
@@ -150,10 +150,12 @@ static void build_tables_and_pdb(uint8_t *exact_dist) {
     memset(ori_pdb_packed, 0, sizeof(ori_pdb_packed));
     for (uint16_t i = 0; i < ORIENTATIONS; ++i)
         ori_pdb_packed[i >> 1] |= (uint8_t)((ori_pdb[i] & 0x0FU) << ((i & 1U) << 2));
+}
 
+static void build_exact_dist(uint8_t *exact_dist) {
+    uint32_t head = 0, tail = 0;
     uint32_t *q = malloc((size_t)STATES * sizeof(*q));
     memset(exact_dist, 0xFF, STATES);
-    head = 0; tail = 0;
     exact_dist[0] = 0;
     q[tail++] = 0;
     while (head < tail) {
@@ -370,10 +372,70 @@ static void print_state(uint32_t rank) {
         putchar('1' + state.o[i]);
 }
 
-int main(void) {
+static void emit_half(const char *label, const uint16_t *v, size_t rows, size_t cols) {
+    printf("    .align 2\n%s:\n", label);
+    for (size_t r = 0; r < rows; ++r)
+        for (size_t c = 0; c < cols; ++c)
+            printf("%s%u%s", c % 16 ? "," : "    .half ", (unsigned)v[r * cols + c],
+                   c % 16 == 15 || c == cols - 1 ? "\n" : "");
+}
+
+static void emit_byte(const char *label, const uint8_t *v, size_t n) {
+    printf("    .align 2\n%s:\n", label);
+    for (size_t i = 0; i < n; ++i)
+        printf("%s0x%02x%s", i % 16 ? "," : "    .byte ", (unsigned)v[i],
+               i % 16 == 15 || i == n - 1 ? "\n" : "");
+}
+
+static int gate_h3(const uint8_t *exact_dist) {
+    struct timespec t0, t1;
+    uint64_t h3_nodes = 0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (uint16_t p = 0; p < PERMUTATIONS; ++p) {
+        if (p % 504 == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            double el = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+            printf("  Stage 3 H3 progress: %3d%% (%u / %u states, %.1f sec)\n",
+                   (p * 100) / PERMUTATIONS, (uint32_t)p * ORIENTATIONS, STATES, el);
+            fflush(stdout);
+        }
+        for (uint16_t o = 0; o < ORIENTATIONS; ++o) {
+            uint32_t s = (uint32_t)p * ORIENTATIONS + o;
+            uint8_t len = ida_star_length(p, o, &h3_nodes);
+            if (len != exact_dist[s]) {
+                printf("H3 FAIL at state %u\n", s);
+                return 1;
+            }
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double elapsed = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+    printf("[PASS] Stage 3 Gate H3: All 3,674,160 states verified! Wall-clock time: %.3f seconds\n", elapsed);
+    printf("H3 total nodes: %llu (mean %.1f per state)\n",
+           (unsigned long long)h3_nodes, (double)h3_nodes / STATES);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    int emit = argc == 2 && strcmp(argv[1], "--emit") == 0;
+    int no_h3 = argc == 2 && strcmp(argv[1], "--no-h3") == 0;
+    if (argc > 2 || (argc == 2 && !emit && !no_h3)) {
+        fprintf(stderr, "usage: %s [--emit | --no-h3]\n", argv[0]);
+        return 2;
+    }
+    if (emit) {
+        build_tables_and_pdb();
+        emit_half("perm_move", &perm_move[0][0], 3, PERMUTATIONS);
+        emit_half("ori_move", &ori_move[0][0], 3, ORIENTATIONS);
+        emit_byte("perm_pdb_packed", perm_pdb_packed, sizeof(perm_pdb_packed));
+        emit_byte("ori_pdb_packed", ori_pdb_packed, sizeof(ori_pdb_packed));
+        return 0;
+    }
+
     uint8_t *exact_dist = malloc(STATES);
     if (!exact_dist) return 1;
-    build_tables_and_pdb(exact_dist);
+    build_tables_and_pdb();
+    build_exact_dist(exact_dist);
 
     /* Gate H2: Check table completeness, solved entry, and max values */
     uint8_t max_perm = 0, max_ori = 0;
@@ -412,39 +474,16 @@ int main(void) {
     }
     printf("[PASS] Gate H1: Admissibility h(s) <= d(s) verified across all 3,674,160 states\n");
 
-    state_t test_s = {{1, 0, 2, 3, 4, 5, 6}, {1, 1, 1, 1, 1, 1, 1}};
+    state_t test_s = {{1, 0, 2, 3, 4, 5, 6}, {0, 0, 0, 0, 0, 0, 0}};
     uint32_t rk = rank_state(&test_s);
     profile_stage2_vs_stage3((uint16_t)(rk / ORIENTATIONS), (uint16_t)(rk % ORIENTATIONS));
 
-    struct timespec t0, t1;
-    uint64_t h3_nodes = 0;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (uint16_t p = 0; p < PERMUTATIONS; ++p) {
-        if (p % 504 == 0) {
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            double el = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
-            printf("  Stage 3 H3 progress: %3d%% (%u / %u states, %.1f sec)\n",
-                   (p * 100) / PERMUTATIONS, (uint32_t)p * ORIENTATIONS, STATES, el);
-            fflush(stdout);
-        }
-        for (uint16_t o = 0; o < ORIENTATIONS; ++o) {
-            uint32_t s = (uint32_t)p * ORIENTATIONS + o;
-            uint8_t len = ida_star_length(p, o, &h3_nodes);
-            if (len != exact_dist[s]) {
-                printf("H3 FAIL at state %u\n", s);
-                return 1;
-            }
-        }
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    double elapsed = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
-    printf("[PASS] Stage 3 Gate H3: All 3,674,160 states verified! Wall-clock time: %.3f seconds\n", elapsed);
-    printf("H3 total nodes: %llu (mean %.1f per state)\n",
-           (unsigned long long)h3_nodes, (double)h3_nodes / STATES);
+    if (no_h3)
+        printf("[SKIP] Stage 3 Gate H3 (--no-h3)\n");
+    else if (gate_h3(exact_dist))
+        return 1;
 
     enum { TOP = 10 };
-    const state_t t6_state = {{1, 0, 2, 3, 4, 5, 6}, {0, 0, 0, 0, 0, 0, 0}};
-    uint32_t t6_rank = rank_state(&t6_state);
     uint32_t count = 0;
     for (uint32_t s = 0; s < STATES; ++s)
         count += exact_dist[s] == 11;
@@ -470,14 +509,14 @@ int main(void) {
            count, (unsigned long long)worst[count - 1].nodes, (unsigned long long)worst[count / 2].nodes,
            (double)total / count, (unsigned long long)worst[0].nodes);
     for (uint32_t i = 0; i < count; ++i) {
-        if (i >= TOP && worst[i].rank != t6_rank)
+        if (i >= TOP && worst[i].rank != rk)
             continue;
         uint16_t p = (uint16_t)(worst[i].rank / ORIENTATIONS), o = (uint16_t)(worst[i].rank % ORIENTATIONS);
         uint8_t hp = get_perm_pdb_packed(p), ho = get_ori_pdb_packed(o);
         printf("  #%-4u ", i + 1);
         print_state(worst[i].rank);
         printf("  nodes %llu  h0 %u%s\n", (unsigned long long)worst[i].nodes, (unsigned)(hp > ho ? hp : ho),
-               worst[i].rank == t6_rank ? "  (T6 test state)" : "");
+               worst[i].rank == rk ? "  (T6 test state)" : "");
     }
     free(worst);
 
