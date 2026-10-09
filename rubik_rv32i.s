@@ -1671,20 +1671,8 @@ ida_dfs_loop:
     add  t0, t0, s7
     lbu  s8, 0(t0)
     li   t1, 3
-    blt  s8, t1, check_same_face
+    blt  s8, t1, do_turn_step
     addi s7, s7, -1
-    j    ida_dfs_loop
-
-check_same_face:
-    la   t2, st_last_face
-    add  t2, t2, s7
-    lbu  t2, 0(t2)
-    bne  s8, t2, do_turn_step
-    addi s8, s8, 1
-    sb   s8, 0(t0)
-    la   t3, st_turn
-    add  t3, t3, s7
-    sb   zero, 0(t3)
     j    ida_dfs_loop
 
 do_turn_step:
@@ -1756,6 +1744,12 @@ ori_row_ready:
     j    check_goal
 advance_face:
     addi t6, s8, 1
+    la   t2, st_last_face
+    add  t2, t2, s7
+    lbu  t2, 0(t2)
+    bne  t6, t2, store_next_face
+    addi t6, t6, 1
+store_next_face:
     sb   t6, 0(t0)
     sb   zero, 0(t3)
 
@@ -1812,7 +1806,8 @@ check_prune:
     sh   a5, 0(t0)
     la   t0, st_face
     add  t0, t0, s7
-    sb   zero, 0(t0)
+    sltiu t1, s8, 1
+    sb   t1, 0(t0)
     la   t0, st_turn
     add  t0, t0, s7
     sb   zero, 0(t0)
