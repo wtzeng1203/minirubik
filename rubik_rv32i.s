@@ -99,6 +99,7 @@ cur_o:        .word 0, 0, 0, 0, 0, 0, 0, 0
 st_face:      .word 0, 0, 0, 0
 st_turn:      .word 0, 0, 0, 0
 st_last_face: .word 0, 0, 0, 0
+row_ptr:      .word 0, 0, 0, 0, 0, 0
 # BEGIN TABLES
     .align 2
 perm_move:
@@ -1622,8 +1623,22 @@ ida_star_solve:
 
     mv   s0, a0
     mv   s1, a1
-    la   s2, perm_move
-    la   s3, ori_move
+    la   s2, row_ptr
+    la   t0, perm_move
+    la   t1, ori_move
+    sw   t0, 0(s2)
+    sw   t1, 4(s2)
+    li   t2, 10080
+    add  t2, t0, t2
+    sw   t2, 8(s2)
+    addi t2, t1, 1458
+    sw   t2, 12(s2)
+    li   t2, 20160
+    add  t2, t0, t2
+    sw   t2, 16(s2)
+    li   t2, 2916
+    add  t2, t1, t2
+    sw   t2, 20(s2)
     la   s4, perm_pdb_packed
     la   s5, ori_pdb_packed
 
@@ -1698,29 +1713,16 @@ step_from_cur:
     lhu  a3, 0(t5)
 
 lookup_transition:
-    li   t5, 0
-    beq  s8, zero, perm_row_ready
-    li   t5, 10080
-    li   t6, 1
-    beq  s8, t6, perm_row_ready
-    li   t5, 20160
-perm_row_ready:
-    slli a4, a2, 1
-    add  t5, t5, a4
+    slli t5, s8, 3
     add  t5, s2, t5
-    lhu  a4, 0(t5)
-
-    li   t5, 0
-    beq  s8, zero, ori_row_ready
-    li   t5, 1458
-    li   t6, 1
-    beq  s8, t6, ori_row_ready
-    li   t5, 2916
-ori_row_ready:
+    lw   t6, 0(t5)
+    lw   t5, 4(t5)
+    slli a4, a2, 1
+    add  a4, t6, a4
+    lhu  a4, 0(a4)
     slli a5, a3, 1
-    add  t5, t5, a5
-    add  t5, s3, t5
-    lhu  a5, 0(t5)
+    add  a5, t5, a5
+    lhu  a5, 0(a5)
 
     la   t5, cur_p
     add  t5, t5, t4
