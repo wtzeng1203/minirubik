@@ -1755,8 +1755,9 @@ store_next_face:
 
 check_goal:
     addi s10, s7, 1
+    blt  s10, s6, check_prune
     or   t5, a4, a5
-    bne  t5, zero, check_prune
+    bne  t5, zero, ida_dfs_loop
 
     li   t0, 0
     la   t1, chosen_move
@@ -1774,8 +1775,6 @@ copy_sol_done:
     j    ida_exit
 
 check_prune:
-    bge  s10, s6, ida_dfs_loop
-
     srli t0, a4, 1
     add  t0, s4, t0
     lbu  t0, 0(t0)
