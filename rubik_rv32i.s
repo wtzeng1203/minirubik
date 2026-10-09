@@ -92,13 +92,7 @@ next_state_o: .word 0, 0
 sol_moves:    .word 0, 0, 0, 0
 
 .align 2
-st_p:         .word 0, 0, 0, 0, 0, 0, 0, 0
-st_o:         .word 0, 0, 0, 0, 0, 0, 0, 0
-cur_p:        .word 0, 0, 0, 0, 0, 0, 0, 0
-cur_o:        .word 0, 0, 0, 0, 0, 0, 0, 0
-st_face:      .word 0, 0, 0, 0
-st_turn:      .word 0, 0, 0, 0
-st_last_face: .word 0, 0, 0, 0
+frames:       .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 row_ptr:      .word 0, 0, 0, 0, 0, 0
 # BEGIN TABLES
     .align 2
@@ -1667,50 +1661,34 @@ bound_init_ok:
 
 ida_bound_loop:
     li   s7, 0
-    la   t0, st_p
-    sh   s0, 0(t0)
-    la   t0, st_o
-    sh   s1, 0(t0)
-    la   t0, st_face
-    sb   zero, 0(t0)
-    la   t0, st_turn
-    sb   zero, 0(t0)
-    la   t0, st_last_face
+    la   s3, frames
+    sh   s0, 0(s3)
+    sh   s1, 2(s3)
+    sb   zero, 8(s3)
+    sb   zero, 9(s3)
     li   t1, 3
-    sb   t1, 0(t0)
+    sb   t1, 10(s3)
 
 ida_dfs_loop:
     blt  s7, zero, ida_next_bound
-    la   t0, st_face
-    add  t0, t0, s7
-    lbu  s8, 0(t0)
+    lbu  s8, 8(s3)
     li   t1, 3
     blt  s8, t1, do_turn_step
     addi s7, s7, -1
+    addi s3, s3, -12
     j    ida_dfs_loop
 
 do_turn_step:
-    la   t3, st_turn
-    add  t3, t3, s7
-    lbu  s9, 0(t3)
-    slli t4, s7, 1
+    lbu  s9, 9(s3)
 
     bne  s9, zero, step_from_cur
-    la   t5, st_p
-    add  t5, t5, t4
-    lhu  a2, 0(t5)
-    la   t5, st_o
-    add  t5, t5, t4
-    lhu  a3, 0(t5)
+    lhu  a2, 0(s3)
+    lhu  a3, 2(s3)
     j    lookup_transition
 
 step_from_cur:
-    la   t5, cur_p
-    add  t5, t5, t4
-    lhu  a2, 0(t5)
-    la   t5, cur_o
-    add  t5, t5, t4
-    lhu  a3, 0(t5)
+    lhu  a2, 4(s3)
+    lhu  a3, 6(s3)
 
 lookup_transition:
     slli t5, s8, 3
@@ -1724,28 +1702,22 @@ lookup_transition:
     add  a5, t5, a5
     lhu  a5, 0(a5)
 
-    la   t5, cur_p
-    add  t5, t5, t4
-    sh   a4, 0(t5)
-    la   t5, cur_o
-    add  t5, t5, t4
-    sh   a5, 0(t5)
+    sh   a4, 4(s3)
+    sh   a5, 6(s3)
 
     li   t5, 2
     beq  s9, t5, advance_face
     addi s9, s9, 1
-    sb   s9, 0(t3)
+    sb   s9, 9(s3)
     j    check_goal
 advance_face:
     addi t6, s8, 1
-    la   t2, st_last_face
-    add  t2, t2, s7
-    lbu  t2, 0(t2)
+    lbu  t2, 10(s3)
     bne  t6, t2, store_next_face
     addi t6, t6, 1
 store_next_face:
-    sb   t6, 0(t0)
-    sb   zero, 0(t3)
+    sb   t6, 8(s3)
+    sb   zero, 9(s3)
 
 check_goal:
     addi s10, s7, 1
@@ -1754,20 +1726,15 @@ check_goal:
     bne  t5, zero, ida_dfs_loop
 
     li   t0, 0
-    la   t1, st_face
-    la   t2, st_turn
-    la   t3, st_last_face
+    la   t1, frames
     la   t4, sol_moves
 rebuild_loop:
     bge  t0, s10, rebuild_done
-    add  t5, t1, t0
-    lbu  t5, 0(t5)
-    add  t6, t2, t0
-    lbu  t6, 0(t6)
+    lbu  t5, 8(t1)
+    lbu  t6, 9(t1)
     bne  t6, zero, rebuild_turn
     addi t5, t5, -1
-    add  a6, t3, t0
-    lbu  a6, 0(a6)
+    lbu  a6, 10(t1)
     bne  t5, a6, rebuild_face_ok
     addi t5, t5, -1
 rebuild_face_ok:
@@ -1780,6 +1747,7 @@ rebuild_turn:
     add  a7, t4, t0
     sb   a6, 0(a7)
     addi t0, t0, 1
+    addi t1, t1, 12
     j    rebuild_loop
 rebuild_done:
     mv   a0, s10
@@ -1807,23 +1775,13 @@ check_prune:
     bgt  t0, s6, ida_dfs_loop
 
     mv   s7, s10
-    slli t4, s7, 1
-    la   t0, st_p
-    add  t0, t0, t4
-    sh   a4, 0(t0)
-    la   t0, st_o
-    add  t0, t0, t4
-    sh   a5, 0(t0)
-    la   t0, st_face
-    add  t0, t0, s7
+    addi s3, s3, 12
+    sh   a4, 0(s3)
+    sh   a5, 2(s3)
     sltiu t1, s8, 1
-    sb   t1, 0(t0)
-    la   t0, st_turn
-    add  t0, t0, s7
-    sb   zero, 0(t0)
-    la   t0, st_last_face
-    add  t0, t0, s7
-    sb   s8, 0(t0)
+    sb   t1, 8(s3)
+    sb   zero, 9(s3)
+    sb   s8, 10(s3)
     j    ida_dfs_loop
 
 ida_next_bound:
