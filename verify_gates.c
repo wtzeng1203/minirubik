@@ -427,8 +427,8 @@ int main(int argc, char **argv) {
         build_tables_and_pdb();
         emit_half("perm_move", &perm_move[0][0], 3, PERMUTATIONS);
         emit_half("ori_move", &ori_move[0][0], 3, ORIENTATIONS);
-        emit_byte("perm_pdb_packed", perm_pdb_packed, sizeof(perm_pdb_packed));
-        emit_byte("ori_pdb_packed", ori_pdb_packed, sizeof(ori_pdb_packed));
+        emit_byte("perm_pdb", perm_pdb, sizeof(perm_pdb));
+        emit_byte("ori_pdb", ori_pdb, sizeof(ori_pdb));
         return 0;
     }
 
