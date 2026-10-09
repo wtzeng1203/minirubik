@@ -99,7 +99,6 @@ cur_o:        .word 0, 0, 0, 0, 0, 0, 0, 0
 st_face:      .word 0, 0, 0, 0
 st_turn:      .word 0, 0, 0, 0
 st_last_face: .word 0, 0, 0, 0
-chosen_move:  .word 0, 0, 0, 0
 # BEGIN TABLES
     .align 2
 perm_move:
@@ -1730,13 +1729,6 @@ ori_row_ready:
     add  t5, t5, t4
     sh   a5, 0(t5)
 
-    slli t5, s8, 1
-    add  t5, t5, s8
-    add  t5, t5, s9
-    la   t6, chosen_move
-    add  t6, t6, s7
-    sb   t5, 0(t6)
-
     li   t5, 2
     beq  s9, t5, advance_face
     addi s9, s9, 1
@@ -1760,17 +1752,34 @@ check_goal:
     bne  t5, zero, ida_dfs_loop
 
     li   t0, 0
-    la   t1, chosen_move
-    la   t2, sol_moves
-copy_sol_loop:
-    bge  t0, s10, copy_sol_done
-    add  t3, t1, t0
-    lbu  t4, 0(t3)
-    add  t3, t2, t0
-    sb   t4, 0(t3)
+    la   t1, st_face
+    la   t2, st_turn
+    la   t3, st_last_face
+    la   t4, sol_moves
+rebuild_loop:
+    bge  t0, s10, rebuild_done
+    add  t5, t1, t0
+    lbu  t5, 0(t5)
+    add  t6, t2, t0
+    lbu  t6, 0(t6)
+    bne  t6, zero, rebuild_turn
+    addi t5, t5, -1
+    add  a6, t3, t0
+    lbu  a6, 0(a6)
+    bne  t5, a6, rebuild_face_ok
+    addi t5, t5, -1
+rebuild_face_ok:
+    li   t6, 3
+rebuild_turn:
+    addi t6, t6, -1
+    slli a6, t5, 1
+    add  a6, a6, t5
+    add  a6, a6, t6
+    add  a7, t4, t0
+    sb   a6, 0(a7)
     addi t0, t0, 1
-    j    copy_sol_loop
-copy_sol_done:
+    j    rebuild_loop
+rebuild_done:
     mv   a0, s10
     j    ida_exit
 
