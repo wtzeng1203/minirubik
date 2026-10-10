@@ -416,11 +416,40 @@ static int gate_h3(const uint8_t *exact_dist) {
     return 0;
 }
 
+/* Every distance-11 state in rank order with its Stage 3 IDA* node count;
+ * NULL when a state does not solve in exactly 11 moves or memory runs out. */
+static worst_t *collect_dist11(const uint8_t *exact_dist, uint32_t *count, uint64_t *total) {
+    uint32_t n = 0;
+    for (uint32_t s = 0; s < STATES; ++s)
+        n += exact_dist[s] == 11;
+    worst_t *list = n ? malloc(n * sizeof(*list)) : NULL;
+    if (!list) return NULL;
+    *count = n;
+    *total = 0;
+    n = 0;
+    for (uint32_t s = 0; s < STATES; ++s) {
+        if (exact_dist[s] != 11)
+            continue;
+        uint64_t nodes = 0;
+        if (ida_star_length((uint16_t)(s / ORIENTATIONS), (uint16_t)(s % ORIENTATIONS), &nodes) != 11) {
+            printf("WORST FAIL at state %u\n", s);
+            free(list);
+            return NULL;
+        }
+        list[n].rank = s;
+        list[n].nodes = nodes;
+        *total += nodes;
+        ++n;
+    }
+    return list;
+}
+
 int main(int argc, char **argv) {
     int emit = argc == 2 && strcmp(argv[1], "--emit") == 0;
     int no_h3 = argc == 2 && strcmp(argv[1], "--no-h3") == 0;
-    if (argc > 2 || (argc == 2 && !emit && !no_h3)) {
-        fprintf(stderr, "usage: %s [--emit | --no-h3]\n", argv[0]);
+    int list11 = argc == 2 && strcmp(argv[1], "--list11") == 0;
+    if (argc > 2 || (argc == 2 && !emit && !no_h3 && !list11)) {
+        fprintf(stderr, "usage: %s [--emit | --no-h3 | --list11]\n", argv[0]);
         return 2;
     }
     if (emit) {
@@ -436,6 +465,21 @@ int main(int argc, char **argv) {
     if (!exact_dist) return 1;
     build_tables_and_pdb();
     build_exact_dist(exact_dist);
+
+    if (list11) {
+        uint32_t count;
+        uint64_t total;
+        worst_t *list = collect_dist11(exact_dist, &count, &total);
+        if (!list) return 1;
+        printf("state,nodes\n");
+        for (uint32_t i = 0; i < count; ++i) {
+            print_state(list[i].rank);
+            printf(",%llu\n", (unsigned long long)list[i].nodes);
+        }
+        free(list);
+        free(exact_dist);
+        return 0;
+    }
 
     /* Gate H2: Check table completeness, solved entry, and max values */
     uint8_t max_perm = 0, max_ori = 0;
@@ -484,26 +528,10 @@ int main(int argc, char **argv) {
         return 1;
 
     enum { TOP = 10 };
-    uint32_t count = 0;
-    for (uint32_t s = 0; s < STATES; ++s)
-        count += exact_dist[s] == 11;
-    worst_t *worst = count ? malloc(count * sizeof(*worst)) : NULL;
+    uint32_t count;
+    uint64_t total;
+    worst_t *worst = collect_dist11(exact_dist, &count, &total);
     if (!worst) return 1;
-    uint64_t total = 0;
-    uint32_t n = 0;
-    for (uint32_t s = 0; s < STATES; ++s) {
-        if (exact_dist[s] != 11)
-            continue;
-        uint64_t nodes = 0;
-        if (ida_star_length((uint16_t)(s / ORIENTATIONS), (uint16_t)(s % ORIENTATIONS), &nodes) != 11) {
-            printf("WORST FAIL at state %u\n", s);
-            return 1;
-        }
-        worst[n].rank = s;
-        worst[n].nodes = nodes;
-        total += nodes;
-        ++n;
-    }
     qsort(worst, count, sizeof(*worst), worst_cmp);
     printf("=== %u distance-11 states, Stage 3 IDA* nodes: min %llu, median %llu, mean %.1f, max %llu ===\n",
            count, (unsigned long long)worst[count - 1].nodes, (unsigned long long)worst[count / 2].nodes,
